@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Snake Game</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #333;
+            background: black;
+        }
+        #leaderboard {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #gameOver {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px 40px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #ff0000;
+        }
+        #nameModal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px 40px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #4CAF50;
+            color: white;
+            z-index: 1000;
+        }
+        .button {
+            margin-top: 15px;
+            padding: 10px 20px;
+            border: none;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #startButton {
+            background: #4CAF50;
+        }
+        #startButton:hover {
+            background: #45a049;
+        }
+        #playAgain {
+            background: #ff0000;
+        }
+        #playAgain:hover {
+            background: #cc0000;
+        }
+        input[type="text"] {
+            padding: 8px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #4CAF50;
+            background: #333;
+            color: white;
+            width: 200px;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="nameModal">
+        <h2>Enter Your Name</h2>
+        <input type="text" id="playerName" maxlength="15" placeholder="Your name">
+        <br>
+        <button id="startButton" class="button">Start Game</button>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="leaderboard">
+        <h3>Leaderboard</h3>
+        <div id="scores"></div>
+    </div>
+    
+    <div id="gameOver">
+        <h2>Game Over!</h2>
+        <p>Your snake has crashed!</p>
+        <button id="playAgain" class="button" onclick="window.location.reload()">Play Again</button>
+    </div>
+    
+    <script src="game.js"></script>
+</body>
+</html> 
