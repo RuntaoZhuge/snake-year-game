@@ -4,7 +4,10 @@ const scoresDiv = document.getElementById('scores');
 const gameOverDiv = document.getElementById('gameOver');
 const nameModal = document.getElementById('nameModal');
 const playerNameInput = document.getElementById('playerName');
-const startButton = document.getElementById('startButton');
+const enterGameButton = document.getElementById('enterGameButton');
+const readyButton = document.getElementById('readyButton');
+const startGameButton = document.getElementById('startGameButton');
+const waitingMessage = document.getElementById('waitingMessage');
 
 // Set canvas size
 canvas.width = window.innerWidth - 50;
@@ -24,22 +27,69 @@ let playerName = '';
 canvas.style.display = 'none';
 document.getElementById('leaderboard').style.display = 'none';
 
-// Handle start button click
-startButton.addEventListener('click', () => {
+// Add waiting room elements
+const waitingRoom = document.getElementById('waitingRoom');
+const playerList = document.getElementById('playerList');
+const countdownDisplay = document.getElementById('countdown');
+
+// Game state
+let isReady = false;
+let gameStarted = false;
+let isRoomMaster = false;
+
+// Handle enter game button click
+enterGameButton.addEventListener('click', () => {
     playerName = playerNameInput.value.trim();
     if (playerName) {
         nameModal.style.display = 'none';
-        canvas.style.display = 'block';
-        document.getElementById('leaderboard').style.display = 'block';
-        init(); // Start the game
+        waitingRoom.style.display = 'block';
         socket.emit('setName', playerName);
     }
+});
+
+// Handle ready button click (for all players including master)
+readyButton.addEventListener('click', () => {
+    isReady = !isReady;
+    readyButton.textContent = isReady ? 'Not Ready' : 'Ready';
+    readyButton.style.background = isReady ? '#ff0000' : '#4CAF50';
+    socket.emit('playerReady');
+});
+
+// Handle start game button click (for room master)
+startGameButton.addEventListener('click', () => {
+    if (isRoomMaster) {
+        socket.emit('startGame');
+        startGameButton.disabled = true;
+        startGameButton.style.opacity = '0.5';
+    }
+});
+
+// Update UI based on room master status
+function updateStartButton() {
+    if (isRoomMaster) {
+        startGameButton.style.display = 'inline-block';
+    } else {
+        startGameButton.style.display = 'none';
+    }
+}
+
+// Socket events for game state
+socket.on('gameState', (data) => {
+    if (data.state === 'playing') {
+        startGame();
+    } else if (data.state === 'countdown') {
+        countdownDisplay.textContent = `Game starts in ${data.countdown} seconds`;
+    }
+    
+    // Update room master status
+    isRoomMaster = socket.id === data.roomMaster;
+    updateStartButton();
 });
 
 // Handle enter key in name input
 playerNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
-        startButton.click();
+        enterGameButton.click();
     }
 });
 
@@ -104,7 +154,7 @@ class Snake {
     update() {
         if (this.isDead) return;
 
-        const CONSTANT_SPEED = 2;  // Fixed speed value
+        const CONSTANT_SPEED = 2;  
         
         // Calculate direction based on control type
         let moveVec;
@@ -492,6 +542,13 @@ window.addEventListener('resize', () => {
 function restartGame() {
     gameOver = false;
     gameOverDiv.style.display = 'none';
+    waitingRoom.style.display = 'block';
+    canvas.style.display = 'none';
+    
+    // Reset ready state
+    isReady = false;
+    readyButton.disabled = false;
+    readyButton.style.opacity = '1';
     
     // Create new snake at center with zero initial velocity
     snake = new Snake(0, 0);
@@ -499,8 +556,6 @@ function restartGame() {
     // Reset any accumulated movement data
     joystickData = { x: 0, y: 0 };
     lastMoveVec = new Vector(0, 0);
-    
-    init();
 }
 
 // Update the game over div event listener
@@ -580,4 +635,79 @@ joystick.addEventListener('mousedown', handleJoystickStart);
 document.addEventListener('mousemove', (e) => {
     if (isJoystickActive) handleJoystickMove(e);
 });
-document.addEventListener('mouseup', handleJoystickEnd); 
+document.addEventListener('mouseup', handleJoystickEnd);
+
+// Add fullscreen button functionality
+const fullscreenButton = document.getElementById('fullscreenButton');
+
+fullscreenButton.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            console.log(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+});
+
+// Update canvas size function
+function updateCanvasSize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+// Handle window resize and orientation change
+window.addEventListener('resize', updateCanvasSize);
+window.addEventListener('orientationchange', updateCanvasSize);
+
+// Initial canvas size
+updateCanvasSize();
+
+// Handle fullscreen change
+document.addEventListener('fullscreenchange', () => {
+    updateCanvasSize();
+});
+
+socket.on('playerList', (players) => {
+    const playerListHTML = players.map(player => {
+        const statusClass = player.ready ? 'ready' : 'not-ready';
+        const statusText = player.ready ? 'Ready' : 'Not Ready';
+        const masterIcon = player.isRoomMaster ? '<span class="crown-icon">👑 Game Master</span>' : '';
+        
+        return `
+            <div class="player-item">
+                <div class="player-name">
+                    ${masterIcon}
+                    <span>${player.name}</span>
+                </div>
+                <span class="status-indicator ${statusClass}">${statusText}</span>
+            </div>`;
+    }).join('');
+    
+    playerList.innerHTML = playerListHTML;
+    
+    // Update waiting message
+    const allReady = players.every(player => player.ready);
+    if (allReady) {
+        if (isRoomMaster) {
+            waitingMessage.textContent = 'All players ready! Click Start Game to begin!';
+        } else {
+            waitingMessage.textContent = 'All players ready! Waiting for game master to start...';
+        }
+        waitingMessage.style.color = '#4CAF50';
+    } else {
+        const notReadyCount = players.filter(player => !player.ready).length;
+        waitingMessage.textContent = `Waiting for ${notReadyCount} player${notReadyCount > 1 ? 's' : ''} to be ready...`;
+        waitingMessage.style.color = 'orange';
+    }
+});
+
+// Add socket event for all players ready
+socket.on('allPlayersReady', (ready) => {
+    if (isRoomMaster) {
+        startGameButton.disabled = !ready;
+        startGameButton.style.opacity = ready ? '1' : '0.5';
+        waitingMessage.textContent = ready ? 'All players ready! You can start the game!' : 'Waiting for all players to be ready...';
+        waitingMessage.style.color = ready ? '#4CAF50' : 'orange';
+    }
+}); 
