@@ -88,10 +88,10 @@ class Vector {
 class Snake {
     constructor(x, y) {
         this.pos = new Vector(x, y);
-        this.vel = new Vector(1, 0);
+        this.vel = new Vector(0, 0);  // Start with zero velocity
         this.segments = [];
         this.radius = 10;
-        this.length = 20;
+        this.length = 50;
         this.color = `hsl(${Math.random() * 360}, 50%, 50%)`;
         this.isDead = false;
         
@@ -104,15 +104,38 @@ class Snake {
     update() {
         if (this.isDead) return;
 
-        // Calculate direction based on mouse position
-        const center = new Vector(canvas.width/2, canvas.height/2);
-        const mouseVec = new Vector(mouseX - center.x, mouseY - center.y);
-        mouseVec.normalize();
-        mouseVec.mult(3);
+        const CONSTANT_SPEED = 2;  // Fixed speed value
+        
+        // Calculate direction based on control type
+        let moveVec;
+        if (isMobileControl) {
+            if (Math.abs(joystickData.x) > 0.1 || Math.abs(joystickData.y) > 0.1) {
+                moveVec = new Vector(joystickData.x, joystickData.y);
+            } else {
+                moveVec = new Vector(this.vel.x, this.vel.y);
+            }
+        } else {
+            const center = new Vector(canvas.width/2, canvas.height/2);
+            moveVec = new Vector(mouseX - center.x, mouseY - center.y);
+        }
+
+        // Normalize and apply constant speed
+        if (moveVec.x !== 0 || moveVec.y !== 0) {
+            const len = Math.sqrt(moveVec.x * moveVec.x + moveVec.y * moveVec.y);
+            moveVec.x = (moveVec.x / len) * CONSTANT_SPEED;
+            moveVec.y = (moveVec.y / len) * CONSTANT_SPEED;
+        }
 
         // Smooth turning
-        this.vel.x = this.vel.x * 0.9 + mouseVec.x * 0.1;
-        this.vel.y = this.vel.y * 0.9 + mouseVec.y * 0.1;
+        this.vel.x = this.vel.x * 0.9 + moveVec.x * 0.1;
+        this.vel.y = this.vel.y * 0.9 + moveVec.y * 0.1;
+
+        // Ensure constant speed
+        const currentSpeed = Math.sqrt(this.vel.x * this.vel.x + this.vel.y * this.vel.y);
+        if (currentSpeed > 0) {
+            this.vel.x = (this.vel.x / currentSpeed) * CONSTANT_SPEED;
+            this.vel.y = (this.vel.y / currentSpeed) * CONSTANT_SPEED;
+        }
         
         // Update head position
         this.pos.add(this.vel);
@@ -128,7 +151,6 @@ class Snake {
         for (const id in otherPlayers) {
             if (id !== socket.id) {
                 const otherSnake = otherPlayers[id];
-                // Check collision with other snake's segments
                 for (const segment of otherSnake.segments) {
                     const dx = this.pos.x - segment.x;
                     const dy = this.pos.y - segment.y;
@@ -263,12 +285,13 @@ class Snake {
     }
 
     grow(value = 1) {
-        for (let i = 0; i < value; i++) {
+        if (this.segments.length % 2 === 0) {
             const last = this.segments[this.segments.length - 1].copy();
             this.segments.push(last);
             this.length++;
         }
-        this.radius = Math.min(this.radius + 0.5, 30);
+        // Slower radius 
+        this.radius = Math.min(this.radius + 0.05, 30);
     }
 }
 
@@ -463,4 +486,98 @@ function gameLoop() {
 window.addEventListener('resize', () => {
     canvas.width = window.innerWidth - 50;
     canvas.height = window.innerHeight - 50;
-}); 
+});
+
+// Add restart function
+function restartGame() {
+    gameOver = false;
+    gameOverDiv.style.display = 'none';
+    
+    // Create new snake at center with zero initial velocity
+    snake = new Snake(0, 0);
+    
+    // Reset any accumulated movement data
+    joystickData = { x: 0, y: 0 };
+    lastMoveVec = new Vector(0, 0);
+    
+    init();
+}
+
+// Update the game over div event listener
+document.getElementById('playAgain').onclick = (e) => {
+    e.preventDefault();
+    restartGame();
+};
+
+// Add mobile control variables
+const mobileControls = document.getElementById('mobileControls');
+const joystick = document.getElementById('joystick');
+const stick = document.getElementById('stick');
+let isMobileControl = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+let joystickData = { x: 0, y: 0 };
+let lastMoveVec = new Vector(0, 0);
+
+// Joystick touch handling
+let isJoystickActive = false;
+const joystickBounds = {
+    maxDistance: 35,  // Maximum distance stick can move from center
+    centerX: 0,
+    centerY: 0
+};
+
+function updateJoystickBounds() {
+    const rect = joystick.getBoundingClientRect();
+    joystickBounds.centerX = rect.left + rect.width / 2;
+    joystickBounds.centerY = rect.top + rect.height / 2;
+}
+
+function handleJoystickStart(e) {
+    isJoystickActive = true;
+    updateJoystickBounds();
+    handleJoystickMove(e);
+}
+
+function handleJoystickMove(e) {
+    if (!isJoystickActive) return;
+
+    e.preventDefault();
+    const touch = e.touches ? e.touches[0] : e;
+    
+    let dx = touch.clientX - joystickBounds.centerX;
+    let dy = touch.clientY - joystickBounds.centerY;
+    
+    // Calculate distance from center
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    // Normalize if distance is greater than maxDistance
+    if (distance > joystickBounds.maxDistance) {
+        dx = (dx / distance) * joystickBounds.maxDistance;
+        dy = (dy / distance) * joystickBounds.maxDistance;
+    }
+    
+    // Update stick position
+    stick.style.transform = `translate(${dx}px, ${dy}px)`;
+    
+    // Update joystick data for snake movement
+    joystickData.x = dx / joystickBounds.maxDistance;
+    joystickData.y = dy / joystickBounds.maxDistance;
+}
+
+function handleJoystickEnd() {
+    isJoystickActive = false;
+    stick.style.transform = 'translate(-50%, -50%)';
+    joystickData = { x: 0, y: 0 };
+}
+
+// Add touch event listeners
+joystick.addEventListener('touchstart', handleJoystickStart);
+joystick.addEventListener('touchmove', handleJoystickMove);
+joystick.addEventListener('touchend', handleJoystickEnd);
+joystick.addEventListener('touchcancel', handleJoystickEnd);
+
+// Also add mouse event listeners for testing on desktop
+joystick.addEventListener('mousedown', handleJoystickStart);
+document.addEventListener('mousemove', (e) => {
+    if (isJoystickActive) handleJoystickMove(e);
+});
+document.addEventListener('mouseup', handleJoystickEnd); 
