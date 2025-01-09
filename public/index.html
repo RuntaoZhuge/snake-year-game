@@ -124,6 +124,15 @@
                 display: block;
             }
         }
+
+        /* Position joystick in landscape mode */
+        @media (orientation: landscape) and (hover: none) and (pointer: coarse) {
+            #mobileControls {
+                left: 80px;
+                bottom: 80px;
+                transform: none;
+            }
+        }
     </style>
 </head>
 <body>

@@ -285,13 +285,13 @@ class Snake {
     }
 
     grow(value = 1) {
-        if (this.segments.length % 2 === 0) {
-            const last = this.segments[this.segments.length - 1].copy();
-            this.segments.push(last);
-            this.length++;
-        }
-        // Slower radius 
-        this.radius = Math.min(this.radius + 0.05, 30);
+        // Add a new segment every time food is eaten
+        const last = this.segments[this.segments.length - 1].copy();
+        this.segments.push(last);
+        this.length++;
+        
+        // Very small radius increase
+        this.radius = Math.min(this.radius + 0.02, 25);
     }
 }
 

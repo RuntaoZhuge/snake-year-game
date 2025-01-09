@@ -61,9 +61,8 @@ io.on('connection', (socket) => {
 
     socket.on('foodEaten', (index) => {
         if (index >= 0 && index < foods.length) {
-            const food = foods[index];
             if (players[socket.id]) {
-                players[socket.id].score += food.value || 1;
+                players[socket.id].score += 1;
             }
             foods[index] = generateFood();
         }
@@ -73,7 +72,10 @@ io.on('connection', (socket) => {
         // Replace random food dots with the dead snake's dots
         foodDots.forEach(dot => {
             const index = Math.floor(Math.random() * foods.length);
-            foods[index] = dot;
+            foods[index] = {
+                ...dot,
+                value: 1
+            };
         });
         
         // Reset player score instead of removing them
