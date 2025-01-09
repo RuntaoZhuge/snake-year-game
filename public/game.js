@@ -1,3 +1,4 @@
+// Get DOM elements
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const scoresDiv = document.getElementById('scores');
@@ -5,6 +6,9 @@ const gameOverDiv = document.getElementById('gameOver');
 const nameModal = document.getElementById('nameModal');
 const playerNameInput = document.getElementById('playerName');
 const enterGameButton = document.getElementById('enterGameButton');
+const waitingRoom = document.getElementById('waitingRoom');
+const playerList = document.getElementById('playerList');
+const countdownDisplay = document.getElementById('countdown');
 const readyButton = document.getElementById('readyButton');
 const startGameButton = document.getElementById('startGameButton');
 const waitingMessage = document.getElementById('waitingMessage');
@@ -25,19 +29,16 @@ let playerName = '';
 let gameTimer = 20; // Match server's GAME_DURATION
 let gameTimerInterval = null;
 
-// Hide canvas and leaderboard initially
+// Hide UI elements initially
 canvas.style.display = 'none';
 document.getElementById('leaderboard').style.display = 'none';
-
-// Add waiting room elements
-const waitingRoom = document.getElementById('waitingRoom');
-const playerList = document.getElementById('playerList');
-const countdownDisplay = document.getElementById('countdown');
+waitingRoom.style.display = 'none';
 
 // Game state
 let isReady = false;
 let gameStarted = false;
 let isRoomMaster = false;
+let gameState = 'waiting';
 
 // Add timer display div
 const timerDiv = document.createElement('div');
@@ -60,16 +61,15 @@ function formatTime(seconds) {
 }
 
 function startGameTimer() {
-    gameTimer = 20; // Match server's GAME_DURATION
-    updateTimerDisplay();
-    
     if (gameTimerInterval) {
         clearInterval(gameTimerInterval);
     }
     
     gameTimerInterval = setInterval(() => {
-        gameTimer--;
-        updateTimerDisplay();
+        if (gameTimer > 0) {
+            gameTimer--;
+            updateTimerDisplay();
+        }
         
         if (gameTimer <= 0) {
             clearInterval(gameTimerInterval);
@@ -89,15 +89,49 @@ enterGameButton.addEventListener('click', () => {
         nameModal.style.display = 'none';
         waitingRoom.style.display = 'block';
         socket.emit('setName', playerName);
+        
+        // If game is in progress, show appropriate message
+        if (gameState === 'playing') {
+            waitingMessage.textContent = 'Game in progress! You will join when ready.';
+            waitingMessage.style.color = '#4CAF50';
+            readyButton.textContent = 'Join Game';
+            readyButton.style.background = '#4CAF50';
+        }
     }
 });
 
 // Handle ready button click (for all players including master)
 readyButton.addEventListener('click', () => {
-    isReady = !isReady;
-    readyButton.textContent = isReady ? 'Not Ready' : 'Ready';
-    readyButton.style.background = isReady ? '#ff0000' : '#4CAF50';
-    socket.emit('playerReady');
+    if (gameState === 'playing') {
+        // If game is in progress, clicking ready/join will start the game for this player
+        waitingRoom.style.display = 'none';
+        canvas.style.display = 'block';
+        document.getElementById('leaderboard').style.display = 'block';
+        gameStarted = true;
+        
+        // Initialize new snake for mid-game joiner
+        const startPos = getRandomPosition();
+        snake = new Snake(startPos.x, startPos.y);
+        gameOver = false;
+        
+        // Start game loop and socket events
+        socket.on('heartbeat', function(data) {
+            otherPlayers = data.players;
+            foods = data.foods;
+        });
+
+        socket.on('updateLeaderboard', function(data) {
+            updateLeaderboard(data);
+        });
+
+        gameLoop();
+    } else {
+        // Normal ready/not ready toggle for waiting state
+        isReady = !isReady;
+        readyButton.textContent = isReady ? 'Not Ready' : 'Ready';
+        readyButton.style.background = isReady ? '#ff0000' : '#4CAF50';
+        socket.emit('playerReady');
+    }
 });
 
 // Handle start game button click (for room master)
@@ -120,16 +154,51 @@ function updateStartButton() {
 
 // Socket events for game state
 socket.on('gameState', (data) => {
+    // Store current game state
+    gameState = data.state;
+    
     if (data.state === 'playing') {
-        startGame();
-        waitingRoom.style.display = 'none';
-        canvas.style.display = 'block';
-        document.getElementById('leaderboard').style.display = 'block';
+        // Don't automatically start game for new players
+        // They need to click "Join Game" button first
+        if (gameStarted) {
+            waitingRoom.style.display = 'none';
+            canvas.style.display = 'block';
+            document.getElementById('leaderboard').style.display = 'block';
+        }
+        // Set initial game timer from server
+        gameTimer = data.gameTimeRemaining || 0;
+        updateTimerDisplay();
+        
+        // Update waiting room message if visible and player has entered name
+        if (waitingRoom.style.display === 'block' && playerName) {
+            waitingMessage.textContent = 'Game in progress! You will join when ready.';
+            waitingMessage.style.color = '#4CAF50';
+            readyButton.textContent = 'Join Game';
+            readyButton.style.background = '#4CAF50';
+        }
     } else if (data.state === 'countdown') {
-        countdownDisplay.style.display = 'block';
-        countdownDisplay.textContent = `Game starts in ${data.countdown}`;
-        countdownDisplay.style.fontSize = '48px';
-        countdownDisplay.style.color = '#4CAF50';
+        if (playerName) {
+            countdownDisplay.style.display = 'block';
+            countdownDisplay.textContent = `Game starts in ${data.countdown}`;
+            countdownDisplay.style.fontSize = '48px';
+            countdownDisplay.style.color = '#4CAF50';
+        }
+    } else if (data.state === 'waiting') {
+        // Reset UI for waiting state
+        gameStarted = false;
+        // Only show waiting room if player has entered name
+        if (playerName) {
+            waitingRoom.style.display = 'block';
+        }
+        canvas.style.display = 'none';
+        document.getElementById('leaderboard').style.display = 'none';
+        countdownDisplay.style.display = 'none';
+        gameOver = false;
+        readyButton.textContent = 'Ready';
+        readyButton.style.background = '#4CAF50';
+        if (gameTimerInterval) {
+            clearInterval(gameTimerInterval);
+        }
     }
     
     // Update room master status
@@ -154,11 +223,18 @@ socket.on('countdown', (time) => {
 
 // Add game start socket event
 socket.on('gameStart', () => {
+    gameStarted = true;
     countdownDisplay.style.display = 'none';
     waitingRoom.style.display = 'none';
     canvas.style.display = 'block';
     document.getElementById('leaderboard').style.display = 'block';
     init();
+});
+
+// Add new socket event for game time updates
+socket.on('gameTimeUpdate', (timeRemaining) => {
+    gameTimer = timeRemaining;
+    updateTimerDisplay();
 });
 
 // Handle enter key in name input
@@ -452,9 +528,11 @@ function getRandomPosition() {
 function init() {
     const startPos = getRandomPosition();
     snake = new Snake(startPos.x, startPos.y);
+    gameOver = false;
     
-    // Start game timer
-    startGameTimer();
+    // Remove any existing socket listeners to prevent duplicates
+    socket.off('heartbeat');
+    socket.off('updateLeaderboard');
     
     // Socket events
     socket.on('heartbeat', function(data) {
@@ -725,15 +803,73 @@ document.addEventListener('mouseup', handleJoystickEnd);
 // Add fullscreen button functionality
 const fullscreenButton = document.getElementById('fullscreenButton');
 
-fullscreenButton.addEventListener('click', () => {
-    if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(err => {
+function enterFullscreen(element) {
+    const requestFullscreen = element.requestFullscreen || 
+                            element.webkitRequestFullscreen || 
+                            element.mozRequestFullScreen || 
+                            element.msRequestFullscreen;
+
+    // iOS specific handling
+    if (navigator.userAgent.match(/iPhone|iPad|iPod/i)) {
+        // For iOS, we'll use the standalone mode check
+        if (!window.navigator.standalone) {
+            alert('To enter fullscreen on iOS, add this page to your home screen and launch it from there.');
+            return;
+        }
+    }
+
+    if (requestFullscreen) {
+        requestFullscreen.call(element).catch(err => {
             console.log(`Error attempting to enable fullscreen: ${err.message}`);
+            // Try alternative method for mobile
+            if (document.body.scrollIntoViewIfNeeded) {
+                document.body.scrollIntoViewIfNeeded();
+            } else {
+                document.body.scrollIntoView();
+            }
+            screen.orientation.lock('landscape').catch(err => console.log('Orientation lock failed:', err));
         });
+    }
+}
+
+function exitFullscreen() {
+    const exitFullscreen = document.exitFullscreen || 
+                          document.webkitExitFullscreen || 
+                          document.mozCancelFullScreen || 
+                          document.msExitFullscreen;
+
+    if (exitFullscreen) {
+        exitFullscreen.call(document).catch(err => 
+            console.log(`Error attempting to exit fullscreen: ${err.message}`)
+        );
+    }
+}
+
+fullscreenButton.addEventListener('click', () => {
+    if (!document.fullscreenElement && 
+        !document.webkitFullscreenElement && 
+        !document.mozFullScreenElement && 
+        !document.msFullscreenElement) {
+        enterFullscreen(document.documentElement);
     } else {
-        document.exitFullscreen();
+        exitFullscreen();
     }
 });
+
+// Update fullscreen button text based on state
+document.addEventListener('fullscreenchange', updateFullscreenButton);
+document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+document.addEventListener('MSFullscreenChange', updateFullscreenButton);
+
+function updateFullscreenButton() {
+    const isFullscreen = document.fullscreenElement || 
+                        document.webkitFullscreenElement || 
+                        document.mozFullScreenElement || 
+                        document.msFullscreenElement;
+    
+    fullscreenButton.textContent = isFullscreen ? '↙ Exit Fullscreen' : '⛶ Fullscreen';
+}
 
 // Update canvas size function
 function updateCanvasSize() {
@@ -851,7 +987,7 @@ socket.on('gameEnd', (data) => {
             ${Object.values(otherPlayers)
                 .concat([{name: playerName, score: snake.length - 50}])
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 5)
+                .slice(1, 5)
                 .map((player, index) => `
                     <div style="
                         display: flex;

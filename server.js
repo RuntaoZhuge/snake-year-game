@@ -10,20 +10,19 @@ const foods = [];
 const FOOD_COUNT = 200;
 const COUNTDOWN_TIME = 3; 
 const AUTO_READY_TIME = 30; 
-const GAME_DURATION = 20; // 5 minutes in seconds
+const GAME_DURATION = 300; // 5 minutes in seconds
 let gameState = 'waiting';
 let countdownTime = COUNTDOWN_TIME;
 let gameStartInterval = null;
 let gameEndTimeout = null;
 let roomMaster = null;
 let autoReadyTimeout = null;
+let gameTimeRemaining = GAME_DURATION;
+let gameTimeInterval = null;
 
 function startGameCountdown() {
-    // Check if all players (including master) are ready
-    const allPlayersReady = Object.values(players).every(player => player.ready);
-    
-    // Only room master can start the game and all players must be ready
-    if (gameState === 'waiting' && roomMaster && allPlayersReady) {
+    // Remove the allPlayersReady check for room master
+    if (gameState === 'waiting' && roomMaster) {
         gameState = 'countdown';
         countdownTime = COUNTDOWN_TIME;
         
@@ -38,26 +37,36 @@ function startGameCountdown() {
             if (countdownTime <= 0) {
                 clearInterval(gameStartInterval);
                 gameState = 'playing';
+                gameTimeRemaining = GAME_DURATION;
                 io.emit('gameStart');
                 initializeGame();
                 
-                // Set timeout for game end
-                if (gameEndTimeout) {
-                    clearTimeout(gameEndTimeout);
+                // Start game timer
+                if (gameTimeInterval) {
+                    clearInterval(gameTimeInterval);
                 }
-                gameEndTimeout = setTimeout(() => {
-                    endGame();
-                }, GAME_DURATION * 1000);
+                gameTimeInterval = setInterval(() => {
+                    if (gameTimeRemaining > 0) {
+                        gameTimeRemaining--;
+                        io.emit('gameTimeUpdate', gameTimeRemaining);
+                    }
+                    if (gameTimeRemaining <= 0) {
+                        clearInterval(gameTimeInterval);
+                        endGame();
+                    }
+                }, 1000);
             }
         }, 1000);
-    } else if (!allPlayersReady) {
-        // Notify that not all players are ready
-        io.emit('waitingForPlayers');
     }
 }
 
 function endGame() {
     gameState = 'ended';
+    
+    // Clear game timer interval
+    if (gameTimeInterval) {
+        clearInterval(gameTimeInterval);
+    }
     
     // Get winner (player with highest score)
     const winner = Object.entries(players)
@@ -74,6 +83,7 @@ function endGame() {
     // Reset game state after a delay
     setTimeout(() => {
         gameState = 'waiting';
+        gameTimeRemaining = GAME_DURATION;
         Object.values(players).forEach(player => {
             player.ready = false;
             player.score = 0;
@@ -81,7 +91,8 @@ function endGame() {
         io.emit('gameState', {
             state: 'waiting',
             countdown: COUNTDOWN_TIME,
-            roomMaster: roomMaster
+            roomMaster: roomMaster,
+            gameTimeRemaining: gameTimeRemaining
         });
     }, 5000); // Wait 5 seconds before resetting
 }
@@ -104,12 +115,24 @@ function setNewRoomMaster() {
                     ...player,
                     isRoomMaster: player.id === roomMaster
                 })));
-                startGameCountdown();
             }
         }, AUTO_READY_TIME * 1000);
     } else {
         roomMaster = null;
     }
+}
+
+// Add auto-ready timeout for new players
+function startAutoReadyTimer(socketId) {
+    setTimeout(() => {
+        if (players[socketId] && !players[socketId].ready && gameState === 'waiting') {
+            players[socketId].ready = true;
+            io.emit('playerList', Object.values(players).map(player => ({
+                ...player,
+                isRoomMaster: player.id === roomMaster
+            })));
+        }
+    }, AUTO_READY_TIME * 1000);
 }
 
 function initializeGame() {
@@ -160,7 +183,8 @@ io.on('connection', (socket) => {
     socket.emit('gameState', {
         state: gameState,
         countdown: countdownTime,
-        roomMaster: roomMaster
+        roomMaster: roomMaster,
+        gameTimeRemaining: gameTimeRemaining
     });
 
     socket.on('setName', (name) => {
@@ -170,31 +194,39 @@ io.on('connection', (socket) => {
                 ...player,
                 isRoomMaster: socket.id === roomMaster
             })));
+            
+            // Start auto-ready timer for the player
+            startAutoReadyTimer(socket.id);
         }
     });
 
     socket.on('playerReady', () => {
         if (players[socket.id]) {
-            // All players (including master) toggle their ready status
-            players[socket.id].ready = !players[socket.id].ready;
-            io.emit('playerList', Object.values(players).map(player => ({
-                ...player,
-                isRoomMaster: socket.id === roomMaster
-            })));
-            
-            // Check if all players are ready
-            const allPlayersReady = Object.values(players).every(player => player.ready);
-            if (allPlayersReady) {
-                io.to(roomMaster).emit('allPlayersReady', true);
-            } else {
-                io.to(roomMaster).emit('allPlayersReady', false);
+            // Only allow ready state changes when game is not in progress
+            if (gameState !== 'playing') {
+                players[socket.id].ready = !players[socket.id].ready;
+                io.emit('playerList', Object.values(players).map(player => ({
+                    ...player,
+                    isRoomMaster: socket.id === roomMaster
+                })));
+                
+                // Notify room master about all players ready status
+                const allPlayersReady = Object.values(players).every(player => player.ready);
+                io.to(roomMaster).emit('allPlayersReady', allPlayersReady);
             }
         }
     });
 
     socket.on('startGame', () => {
-        if (socket.id === roomMaster) {
-            startGameCountdown();
+        // Allow both room master to start new game and players to join mid-game
+        if (socket.id === roomMaster || gameState === 'playing') {
+            if (gameState === 'playing') {
+                // For players joining mid-game, just send them the start event
+                socket.emit('gameStart');
+            } else {
+                // For room master starting a new game
+                startGameCountdown();
+            }
         }
     });
 
@@ -209,7 +241,7 @@ io.on('connection', (socket) => {
         
         io.emit('playerList', Object.values(players).map(player => ({
             ...player,
-            isRoomMaster: socket.id === roomMaster
+            isRoomMaster: player.id === roomMaster
         })));
         
         // If not enough players, reset game state
@@ -218,13 +250,17 @@ io.on('connection', (socket) => {
             if (gameStartInterval) {
                 clearInterval(gameStartInterval);
             }
+            if (gameTimeInterval) {
+                clearInterval(gameTimeInterval);
+            }
             if (autoReadyTimeout) {
                 clearTimeout(autoReadyTimeout);
             }
             io.emit('gameState', { 
                 state: 'waiting', 
                 countdown: COUNTDOWN_TIME,
-                roomMaster: roomMaster
+                roomMaster: roomMaster,
+                gameTimeRemaining: GAME_DURATION
             });
         }
     });
