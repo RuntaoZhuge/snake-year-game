@@ -8,11 +8,13 @@ app.use(express.static('public'));
 const players = {};
 const foods = [];
 const FOOD_COUNT = 200;
-const COUNTDOWN_TIME = 10; // seconds to wait after start game clicked
-const AUTO_READY_TIME = 30; // seconds before room master is auto-ready
+const COUNTDOWN_TIME = 3; 
+const AUTO_READY_TIME = 30; 
+const GAME_DURATION = 20; // 5 minutes in seconds
 let gameState = 'waiting';
 let countdownTime = COUNTDOWN_TIME;
 let gameStartInterval = null;
+let gameEndTimeout = null;
 let roomMaster = null;
 let autoReadyTimeout = null;
 
@@ -38,12 +40,50 @@ function startGameCountdown() {
                 gameState = 'playing';
                 io.emit('gameStart');
                 initializeGame();
+                
+                // Set timeout for game end
+                if (gameEndTimeout) {
+                    clearTimeout(gameEndTimeout);
+                }
+                gameEndTimeout = setTimeout(() => {
+                    endGame();
+                }, GAME_DURATION * 1000);
             }
         }, 1000);
     } else if (!allPlayersReady) {
         // Notify that not all players are ready
         io.emit('waitingForPlayers');
     }
+}
+
+function endGame() {
+    gameState = 'ended';
+    
+    // Get winner (player with highest score)
+    const winner = Object.entries(players)
+        .map(([id, player]) => ({
+            id,
+            name: player.name,
+            score: player.score
+        }))
+        .sort((a, b) => b.score - a.score)[0];
+    
+    // Emit game end event with winner info
+    io.emit('gameEnd', { winner });
+    
+    // Reset game state after a delay
+    setTimeout(() => {
+        gameState = 'waiting';
+        Object.values(players).forEach(player => {
+            player.ready = false;
+            player.score = 0;
+        });
+        io.emit('gameState', {
+            state: 'waiting',
+            countdown: COUNTDOWN_TIME,
+            roomMaster: roomMaster
+        });
+    }, 5000); // Wait 5 seconds before resetting
 }
 
 function setNewRoomMaster() {

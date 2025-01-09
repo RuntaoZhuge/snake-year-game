@@ -22,6 +22,8 @@ let mouseX = 0;
 let mouseY = 0;
 let gameOver = false;
 let playerName = '';
+let gameTimer = 20; // Match server's GAME_DURATION
+let gameTimerInterval = null;
 
 // Hide canvas and leaderboard initially
 canvas.style.display = 'none';
@@ -36,6 +38,49 @@ const countdownDisplay = document.getElementById('countdown');
 let isReady = false;
 let gameStarted = false;
 let isRoomMaster = false;
+
+// Add timer display div
+const timerDiv = document.createElement('div');
+timerDiv.style.position = 'fixed';
+timerDiv.style.bottom = '20px';
+timerDiv.style.left = '20px';
+timerDiv.style.color = 'white';
+timerDiv.style.background = 'rgba(0, 0, 0, 0.7)';
+timerDiv.style.padding = '10px';
+timerDiv.style.borderRadius = '5px';
+timerDiv.style.fontSize = '20px';
+timerDiv.style.fontWeight = 'bold';
+timerDiv.style.zIndex = '100';
+document.body.appendChild(timerDiv);
+
+function formatTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+function startGameTimer() {
+    gameTimer = 20; // Match server's GAME_DURATION
+    updateTimerDisplay();
+    
+    if (gameTimerInterval) {
+        clearInterval(gameTimerInterval);
+    }
+    
+    gameTimerInterval = setInterval(() => {
+        gameTimer--;
+        updateTimerDisplay();
+        
+        if (gameTimer <= 0) {
+            clearInterval(gameTimerInterval);
+            updateTimerDisplay(); // Keep the final time visible
+        }
+    }, 1000);
+}
+
+function updateTimerDisplay() {
+    timerDiv.textContent = `Time: ${formatTime(gameTimer)}`;
+}
 
 // Handle enter game button click
 enterGameButton.addEventListener('click', () => {
@@ -77,13 +122,43 @@ function updateStartButton() {
 socket.on('gameState', (data) => {
     if (data.state === 'playing') {
         startGame();
+        waitingRoom.style.display = 'none';
+        canvas.style.display = 'block';
+        document.getElementById('leaderboard').style.display = 'block';
     } else if (data.state === 'countdown') {
-        countdownDisplay.textContent = `Game starts in ${data.countdown} seconds`;
+        countdownDisplay.style.display = 'block';
+        countdownDisplay.textContent = `Game starts in ${data.countdown}`;
+        countdownDisplay.style.fontSize = '48px';
+        countdownDisplay.style.color = '#4CAF50';
     }
     
     // Update room master status
     isRoomMaster = socket.id === data.roomMaster;
     updateStartButton();
+});
+
+// Add countdown socket event
+socket.on('countdown', (time) => {
+    countdownDisplay.style.display = 'block';
+    countdownDisplay.textContent = `Game starts in ${time}`;
+    countdownDisplay.style.fontSize = '48px';
+    countdownDisplay.style.color = '#4CAF50';
+    
+    if (time === 0) {
+        countdownDisplay.style.display = 'none';
+        waitingRoom.style.display = 'none';
+        canvas.style.display = 'block';
+        document.getElementById('leaderboard').style.display = 'block';
+    }
+});
+
+// Add game start socket event
+socket.on('gameStart', () => {
+    countdownDisplay.style.display = 'none';
+    waitingRoom.style.display = 'none';
+    canvas.style.display = 'block';
+    document.getElementById('leaderboard').style.display = 'block';
+    init();
 });
 
 // Handle enter key in name input
@@ -227,6 +302,11 @@ class Snake {
         this.isDead = true;
         gameOver = true;
         gameOverDiv.style.display = 'block';
+        
+        // Clear game timer
+        if (gameTimerInterval) {
+            clearInterval(gameTimerInterval);
+        }
 
         // Calculate position for food dots, shifted away from border if needed
         let foodX = this.pos.x;
@@ -347,33 +427,7 @@ class Snake {
 
 // Draw grid
 function drawGrid(ctx, offsetX, offsetY) {
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    const gridSize = 50;
-    
-    // Draw only visible grid
-    const startX = Math.max(WORLD_BOUNDS.minX, -canvas.width/2 - offsetX);
-    const endX = Math.min(WORLD_BOUNDS.maxX, canvas.width/2 - offsetX);
-    const startY = Math.max(WORLD_BOUNDS.minY, -canvas.height/2 - offsetY);
-    const endY = Math.min(WORLD_BOUNDS.maxY, canvas.height/2 - offsetY);
-    
-    // Vertical lines
-    for (let x = Math.floor(startX/gridSize)*gridSize; x <= endX; x += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(x + offsetX, startY + offsetY);
-        ctx.lineTo(x + offsetX, endY + offsetY);
-        ctx.stroke();
-    }
-    
-    // Horizontal lines
-    for (let y = Math.floor(startY/gridSize)*gridSize; y <= endY; y += gridSize) {
-        ctx.beginPath();
-        ctx.moveTo(startX + offsetX, y + offsetY);
-        ctx.lineTo(endX + offsetX, y + offsetY);
-        ctx.stroke();
-    }
-
-    // Draw world bounds
+    // Only draw world bounds
     ctx.strokeStyle = '#ff0000';
     ctx.lineWidth = 5;
     ctx.strokeRect(
@@ -384,9 +438,23 @@ function drawGrid(ctx, offsetX, offsetY) {
     );
 }
 
+// Add function to generate random position within world bounds
+function getRandomPosition() {
+    // Add some padding from the borders (100 units)
+    const padding = 100;
+    return {
+        x: Math.random() * (WORLD_SIZE - 2 * padding) + WORLD_BOUNDS.minX + padding,
+        y: Math.random() * (WORLD_SIZE - 2 * padding) + WORLD_BOUNDS.minY + padding
+    };
+}
+
 // Initialize game
 function init() {
-    snake = new Snake(0, 0); // Start at center
+    const startPos = getRandomPosition();
+    snake = new Snake(startPos.x, startPos.y);
+    
+    // Start game timer
+    startGameTimer();
     
     // Socket events
     socket.on('heartbeat', function(data) {
@@ -411,10 +479,25 @@ canvas.addEventListener('mousemove', (e) => {
 
 // Update leaderboard display
 function updateLeaderboard(data) {
-    scoresDiv.innerHTML = data
-        .slice(0, 5)
-        .map(player => `<div>${player.name}: ${player.score}</div>`)
-        .join('');
+    const topPlayers = data.slice(0, 5);
+    scoresDiv.innerHTML = `
+        <h3 style="margin-bottom: 10px; color: #FFD700;">🏆 Leaderboard</h3>
+        ${topPlayers.map((player, index) => `
+            <div style="
+                padding: 5px 10px;
+                margin: 3px 0;
+                background: rgba(0, 0, 0, 0.5);
+                border-radius: 5px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                ${index === 0 ? 'border: 1px solid #FFD700;' : ''}
+            ">
+                <span>${index + 1}. ${player.name}</span>
+                <span style="color: ${index === 0 ? '#FFD700' : 'white'}">${player.score}</span>
+            </div>
+        `).join('')}
+    `;
 }
 
 // Game loop
@@ -542,20 +625,22 @@ window.addEventListener('resize', () => {
 function restartGame() {
     gameOver = false;
     gameOverDiv.style.display = 'none';
-    waitingRoom.style.display = 'block';
-    canvas.style.display = 'none';
+    canvas.style.display = 'block';
+    document.getElementById('leaderboard').style.display = 'block';
     
-    // Reset ready state
-    isReady = false;
-    readyButton.disabled = false;
-    readyButton.style.opacity = '1';
-    
-    // Create new snake at center with zero initial velocity
-    snake = new Snake(0, 0);
+    // Create new snake at random position with zero initial velocity
+    const startPos = getRandomPosition();
+    snake = new Snake(startPos.x, startPos.y);
     
     // Reset any accumulated movement data
     joystickData = { x: 0, y: 0 };
     lastMoveVec = new Vector(0, 0);
+    
+    // Start game timer
+    startGameTimer();
+    
+    // Start game loop
+    gameLoop();
 }
 
 // Update the game over div event listener
@@ -710,4 +795,86 @@ socket.on('allPlayersReady', (ready) => {
         waitingMessage.textContent = ready ? 'All players ready! You can start the game!' : 'Waiting for all players to be ready...';
         waitingMessage.style.color = ready ? '#4CAF50' : 'orange';
     }
+});
+
+// Add winner announcement div
+const winnerDiv = document.createElement('div');
+winnerDiv.style.position = 'fixed';
+winnerDiv.style.top = '50%';
+winnerDiv.style.left = '50%';
+winnerDiv.style.transform = 'translate(-50%, -50%)';
+winnerDiv.style.background = 'rgba(0, 0, 0, 0.9)';
+winnerDiv.style.color = '#4CAF50';
+winnerDiv.style.padding = '30px';
+winnerDiv.style.borderRadius = '10px';
+winnerDiv.style.fontSize = '32px';
+winnerDiv.style.fontWeight = 'bold';
+winnerDiv.style.textAlign = 'center';
+winnerDiv.style.display = 'none';
+winnerDiv.style.zIndex = '1000';
+winnerDiv.style.border = '3px solid gold';
+document.body.appendChild(winnerDiv);
+
+// Add game end socket event
+socket.on('gameEnd', (data) => {
+    // Clear game timer
+    if (gameTimerInterval) {
+        clearInterval(gameTimerInterval);
+    }
+    
+    // Stop the snake
+    if (snake) {
+        snake.isDead = true;
+    }
+    
+    // Hide game over div if it's showing
+    gameOverDiv.style.display = 'none';
+    
+    // Show winner announcement with final leaderboard
+    winnerDiv.style.display = 'block';
+    const isWinner = data.winner.id === socket.id;
+    winnerDiv.innerHTML = `
+        <div style="margin-bottom: 20px">
+            ${isWinner ? 
+                `🎉 Congratulations!<br>You are the king snake now!` :
+                `🏆 Game Over!<br>${data.winner.name} is the king snake!`
+            }
+        </div>
+        <div style="
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 24px;
+        ">
+            <div style="color: #FFD700; margin-bottom: 10px;">Final Scores</div>
+            ${Object.values(otherPlayers)
+                .concat([{name: playerName, score: snake.length - 50}])
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5)
+                .map((player, index) => `
+                    <div style="
+                        display: flex;
+                        justify-content: space-between;
+                        padding: 5px 0;
+                        ${player.name === playerName ? 'color: #4CAF50; font-weight: bold;' : 'color: white;'}
+                    ">
+                        <span>${index + 1}. ${player.name}</span>
+                        <span>${player.score}</span>
+                    </div>
+                `).join('')}
+        </div>
+        <div style="margin-top: 20px">
+            <button onclick="location.reload()" style="
+                background: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 18px;
+            ">Play Again</button>
+        </div>
+    `;
+    winnerDiv.style.color = isWinner ? '#FFD700' : '#4CAF50';
 }); 
